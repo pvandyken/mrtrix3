@@ -97,7 +97,96 @@ void usage ()
 
 
 
+class BundlesWriter: public WriterInterface<float> 
+{ MEMALIGN(BundlesWriter)
+  public:
+    BundlesWriter(const std::string& file) : bundle_out(file) {
+      std::string file_data = file + "data";
+      bundle_data_out.open(file_data, std::ios::out | std::ios::binary);
+    }
+    bool operator() (const Streamline<float>& tck) {
+      int size = tck.size();
+      bundle_data_out.write((char*) &size, sizeof(int));
+      for (const auto& pos : tck) {
+        bundle_data_out.write((char*) pos.data(), sizeof(float)*3);
+      };
+      num_tracts += 1;
+      return true;
+    }
+    ~BundlesWriter() {
+      try {
+        bundle_out << 
+          "attributes = {\n"
+          "    'binary' : 1,\n"
+          "    'bundles' : ['points', 0],\n"
+          "    'byte_order' : 'DCBA',\n"
+          "    'curves_count' : " << num_tracts << ",\n"
+          "    'data_file_name' : '*.bundlesdata,\n"
+          "    'format' : 'bundles_1.0',\n"
+          "    'space_dimension' : 3\n"
+          "}";
+        bundle_out.close();
+        bundle_data_out.close();
+      } catch (Exception& e) {
+        e.display();
+        App::exit_error_code = 1;
+      }
+    }
+  private:
+    File::OFStream bundle_out;
+    File::OFStream bundle_data_out;
+    size_t num_tracts = 0;
+};
+class BundlesReader: public ReaderInterface<float> 
+{ MEMALIGN(BundlesReader)
+  public:
+    BundlesReader(const std::string& file) : bundle_in(file) {
+      const std::string file_data = file + "data";
+      bundle_data_in.open(file_data, std::ios::binary | std::ios::in);
+      std::string line;
+      num_tracts = 0;
+      current_tract = 0;
+      while ( std::getline(bundle_in, line) ) {
+        sscanf (line.c_str(), " 'curves_count' : %d", &num_tracts);
+        // Poor workaround for the fact that the colon may or may not be
+        // adjacent to curves_count
+        sscanf (line.c_str(), " 'curves_count': %d", &num_tracts);
+      }
+      if ( num_tracts == 0) {
+        throw Exception("Could not find 'curves_count' in .bundles file.");
+      }
+    }
+    bool operator() (Streamline<float>& tck) {
+      if ( current_tract < num_tracts ) {
+        int tract_length;
+        bundle_data_in.read( (char*) &tract_length, sizeof(tract_length) );
 
+        float points[tract_length*3];
+        bundle_data_in.read( (char*) points, 3*tract_length*sizeof(tract_length) );
+        // for ( int i = 0; i < 3*tract_length; i++ ) {
+        //   points[i] = Raw::fetch_BE<float>(points, i);
+        // }
+        tck.clear();
+        for ( int i = 0; i < tract_length; i++ ) {
+          Eigen::Vector3f f ( points[i*3], points[i*3+1], points[i*3+2] );
+          tck.push_back(f);
+        }
+        current_tract++;
+        return true;
+      }
+      return false;
+    }
+    ~BundlesReader() {
+      bundle_in.close();
+      bundle_data_in.close();
+    }
+
+  private:
+    std::ifstream bundle_in;
+    std::ifstream bundle_data_in;
+    int current_tract;
+    int num_tracts;
+};
 
 
 class VTKWriter: public WriterInterface<float> { MEMALIGN(VTKWriter)
@@ -693,6 +782,9 @@ void run ()
   else if (Path::has_suffix(argument[0], ".vtk")) {
     reader.reset( new VTKReader(argument[0]) );
   }
+  else if (Path::has_suffix(argument[0], ".bundles")) {
+    reader.reset( new BundlesReader(argument[0]) );
+  }
   else {
     throw Exception("Unsupported input file type.");
   }
@@ -717,6 +809,9 @@ void run ()
   }
   else if (Path::has_suffix(argument[1], ".txt")) {
     writer.reset( new ASCIIWriter(argument[1]) );
+  }
+  else if (Path::has_suffix(argument[1], ".bundles")) {
+    writer.reset( new BundlesWriter(argument[1]) );
   }
   else {
     throw Exception("Unsupported output file type.");
