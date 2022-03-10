@@ -121,7 +121,7 @@ class BundlesWriter: public WriterInterface<float>
           "    'bundles' : ['points', 0],\n"
           "    'byte_order' : 'DCBA',\n"
           "    'curves_count' : " << num_tracts << ",\n"
-          "    'data_file_name' : '*.bundlesdata,\n"
+          "    'data_file_name' : '*.bundlesdata',\n"
           "    'format' : 'bundles_1.0',\n"
           "    'space_dimension' : 3\n"
           "}";
