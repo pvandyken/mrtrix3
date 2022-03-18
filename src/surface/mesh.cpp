@@ -19,6 +19,7 @@
 #include <ios>
 #include <iostream>
 #include <string>
+#include <iterator>
 
 #include "types.h"
 
@@ -105,6 +106,7 @@ namespace MR
       // First line: VTK version ID
       std::getline (in, line);
       // Strip the version numbers
+      bool is_v5 = line.find("5.1", 23) != line.size();
       line[23] = line[25] = 'x';
       // Verify that the line is correct
       if (line != "# vtk DataFile Version x.x")
@@ -166,13 +168,20 @@ namespace MR
               throw Exception ("Error in reading binary .vtk file: Unsupported datatype (\"" + line + "\"");
 
             vertices.reserve (num_vertices);
-            for (int i = 0; i != num_vertices; ++i) {
+            if (is_ascii) {
+              size_t num_coords = num_vertices * 3;
+              vector<double> points(this->read_vtk_section<double>(in, num_coords));
+              for (int i = 0; i < num_vertices; i++) {
+                Vertex v;
+                for (int j = 0; j < 3; j++) {
+                  v[j] = points[i*3 + j];
+                }
+                vertices.push_back(v);
+              }
+            } else {
+              for (int i = 0; i != num_vertices; ++i) {
 
-              Vertex v;
-              if (is_ascii) {
-                std::getline (in, line);
-                sscanf (line.c_str(), "%lf %lf %lf", &v[0], &v[1], &v[2]);
-              } else {
+                Vertex v;
                 if (is_double) {
                   double data[3];
                   in.read (reinterpret_cast<char*>(&data[0]), 3 * sizeof (double));
@@ -182,9 +191,9 @@ namespace MR
                   in.read (reinterpret_cast<char*>(&data[0]), 3 * sizeof (float));
                   v = { data[0], data[1], data[2] };
                 }
-              }
-              vertices.push_back (v);
+                vertices.push_back (v);
 
+              }
             }
 
           } else if (line.substr (0, 8) == "POLYGONS") {
@@ -194,6 +203,41 @@ namespace MR
             const int num_polygons = to<int> (line.substr (0, ws));
             line = line.substr (ws + 1);
             const int num_elements = to<int> (line);
+
+            if (is_v5) {
+              vector<int64_t> offsets;
+              vector<int64_t> connections;
+              while (offsets.size() == 0 || connections.size() == 0) {
+                std::getline (in, line); if (line.substr (0, 7) == "OFFSETS") {
+                  line = line.substr(8);
+                  if (line.substr (0, 12) != "vtktypeint64") {
+                    throw Exception ("Error in reading .vtk file: unsupported datatype (\"" + line + "\"");
+                  }
+                  offsets = this->read_vtk_section<int64_t>(in, num_polygons);
+
+                } else if (line.substr (0, 12) == "CONNECTIVITY") {
+                  line = line.substr(13);
+                  if (line.substr (0, 12) != "vtktypeint64") {
+                    throw Exception ("Error in reading .vtk file: unsupported datatype (\"" + line + "\"");
+                  }
+                  connections = this->read_vtk_section<int64_t>(in, num_elements);
+                }
+              }
+
+              for (size_t i = 0; i < offsets.size() - 1; i++) {
+                const int num_vertices = offsets[i+1] - offsets[i];
+                vector<uint64_t> t(connections.begin() + offsets[i],
+                                   connections.begin() + offsets[i] + num_vertices);
+                if (num_vertices == 3) {
+                  triangles.push_back (Polygon<3>(t));
+                } else if (num_vertices == 4) {
+                  quads.push_back (Polygon<4>(t));
+                } else {
+                  throw Exception ("Could not parse file \"" + path + "\";  only suppport 3- and 4-vertex polygons; got " + std::to_string(num_vertices));
+                }
+              }
+              continue;
+            }
 
             int polygon_count = 0, element_count = 0;
             while (polygon_count < num_polygons && element_count < num_elements) {
@@ -232,7 +276,7 @@ namespace MR
               throw Exception ("Incorrectly read polygon data from .vtk file \"" + path + "\"");
 
           } else {
-            throw Exception ("Unsupported data \"" + line + "\" in .vtk file \"" + path + "\"");
+            // throw Exception ("Unsupported data \"" + line + "\" in .vtk file \"" + path + "\"");
           }
         }
       }
@@ -253,6 +297,32 @@ namespace MR
     }
 
 
+    template <class DataType>
+    vector<DataType> Mesh::read_vtk_section (std::ifstream &file,
+                                             const size_t num_entities)
+    {
+      std::string line;
+      vector<DataType> points;
+      while (points.size() < num_entities) {
+        std::getline(file, line);
+        std::istringstream iss(line);
+        for (auto s = std::istream_iterator<std::string>(iss);
+             s != std::istream_iterator<std::string>(); s++) {
+          points.push_back(this->strtonum<DataType>(*s));
+        }
+      }
+      return points;
+    }
+    template vector<double> Mesh::read_vtk_section(std::ifstream &file,
+                                                   const size_t num_entities);
+
+    template <> double Mesh::strtonum(const std::string &s) {
+      return std::stod(s);
+    }
+
+    template <> int64_t Mesh::strtonum(const std::string &s) {
+      return std::stoll(s);
+    }
 
     void Mesh::load_stl (const std::string& path)
     {
