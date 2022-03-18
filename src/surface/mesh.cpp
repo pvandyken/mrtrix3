@@ -25,6 +25,7 @@
 
 #include "surface/freesurfer.h"
 #include "surface/utils.h"
+#include "core/raw.h"
 
 
 namespace MR
@@ -97,6 +98,8 @@ namespace MR
     void Mesh::load_vtk (const std::string& path)
     {
 
+      bool swap_endianness = false;
+
       std::ifstream in (path.c_str(), std::ios_base::in);
       if (!in)
         throw Exception ("Error opening input file!");
@@ -106,7 +109,7 @@ namespace MR
       // First line: VTK version ID
       std::getline (in, line);
       // Strip the version numbers
-      bool is_v5 = line.find("5.1", 23) != line.size();
+      bool is_v5 = line.find("5.1", 23) != std::string::npos;
       line[23] = line[25] = 'x';
       // Verify that the line is correct
       if (line != "# vtk DataFile Version x.x")
@@ -221,6 +224,8 @@ namespace MR
                     throw Exception ("Error in reading .vtk file: unsupported datatype (\"" + line + "\"");
                   }
                   connections = this->read_vtk_section<int64_t>(in, num_elements);
+                } else {
+                  throw Exception ("Error reading .vtk v5.1 file: unknown header (\"" + line + "\")");
                 }
               }
 
@@ -240,6 +245,7 @@ namespace MR
             }
 
             int polygon_count = 0, element_count = 0;
+            bool check_endianness = true;
             while (polygon_count < num_polygons && element_count < num_elements) {
 
               int vertex_count;
@@ -250,8 +256,22 @@ namespace MR
                 in.read (reinterpret_cast<char*>(&vertex_count), sizeof (int));
               }
 
-              if (vertex_count != 3 && vertex_count != 4)
+              if (check_endianness) {
+                int swapped = MR::ByteOrder::swap(vertex_count);
+                if (swapped == 3 || swapped == 4) {
+                  swap_endianness = true;
+                }
+                check_endianness = false;
+              }
+
+              if (swap_endianness) {
+                vertex_count = MR::ByteOrder::swap(vertex_count);
+              }
+
+              if (vertex_count != 3 && vertex_count != 4) {
+                std::cout << vertex_count << " " << polygon_count << " " << element_count << std::endl;
                 throw Exception ("Could not parse file \"" + path + "\";  only suppport 3- and 4-vertex polygons");
+              }
 
               vector<unsigned int> t (vertex_count, 0);
 
