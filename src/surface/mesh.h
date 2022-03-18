@@ -182,7 +182,13 @@ namespace MR
         void save_stl (const std::string&, const bool) const;
         void save_obj (const std::string&) const;
 
+        template <class DataType>
+        vector<DataType> read_vtk_section (std::ifstream &file,
+                                           const size_t num_entities);
         void verify_data() const;
+
+        template <class DataType>
+        DataType strtonum(const std::string &s);
 
         friend class MeshMulti;
         friend class Filter::Smooth;
